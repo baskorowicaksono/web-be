@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
-const prisma = PrismaClient();
+const prisma = new PrismaClient();
 
 export const userService = {
 

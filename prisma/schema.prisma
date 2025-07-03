@@ -19,8 +19,16 @@ model User {
   email             String    @unique
   hashed_password   String
   name              String
+  role              Role      @default(USER)
+  isActive          Boolean   @default(true)
+  emailVerified     Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
   @@map("users")
+}
+
+enum Role {
+  USER
+  ADMIN
 }
