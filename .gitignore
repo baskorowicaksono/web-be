@@ -232,6 +232,7 @@ test-results.xml
 # prisma/schema.prisma should be tracked
 prisma/dev.db
 prisma/dev.db-journal
+generated/
 
 # Docker
 *.dockerfile
