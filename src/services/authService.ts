@@ -15,7 +15,7 @@ export const authService = {
         const accessToken = jwt.sign(
             {
                 data: { userId: userId, email: email, role: role, tokenId: accessTokenId, type: 'ACCESS' },
-                exp: process.env.ACCESS_TOKEN_EXPIRATION
+                exp: Number(process.env.ACCESS_TOKEN_EXPIRATION)
             },
             process.env.ACCESS_TOKEN_SECRET!,
         );
@@ -23,12 +23,30 @@ export const authService = {
         const refreshToken = jwt.sign(
             {
                 data: { userId: userId, email: email, role: role, tokenId: refreshTokenId, type: 'REFRESH' },
-                exp: process.env.ACCESS_TOKEN_EXPIRATION
+                exp: Number(process.env.REFRESH_TOKEN_EXPIRATION)
             },
             process.env.REFRESH_TOKEN_SECRET!,
         );
 
         return {accessToken, refreshToken};
+    },
+
+    decodeToken(token: string): JWTPayload {
+        return jwt.decode(token) as JWTPayload;
+    },
+
+    getTokenExpiry(token: string): number | null {
+    try {
+        const decoded = this.decodeToken(token);
+        return decoded.exp || null;
+        } catch (error) {
+        return null;
+        }
+    },
+
+    isTokenExpired(token: string): boolean {
+        const expiry = this.getTokenExpiry(token);
+        return expiry ? Date.now() / 1000 > expiry : true;
     },
 
     async verifyToken(token: string, type: "ACCESS" | "REFRESH") {
@@ -56,7 +74,7 @@ export const authService = {
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = await prisma.user.create({
-            data: { email, password: hashedPassword, name, role: 'USER'},
+            data: { email, hashed_password: hashedPassword, name: !name ? "TEST" : name, role: 'USER'},
             select: {id: true, email: true, name: true, role: true}
         })
 
@@ -70,7 +88,7 @@ export const authService = {
             throw new Error("Invalid Email!");
         }
 
-        const isValidPassword = await bcrypt.compare(password, foundUser.password);
+        const isValidPassword = await bcrypt.compare(password, foundUser.hashed_password);
         if(!isValidPassword){
             throw new Error("Invalid Password!");
         }
