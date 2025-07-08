@@ -95,7 +95,7 @@ export const authService = {
 
         const token = this.generateToken(foundUser.id, foundUser.email, foundUser.role);
         return {
-            user: { id: foundUser.id, email: foundUser.email, name: foundUser.name},
+            user: { id: foundUser.id, email: foundUser.email, name: foundUser.name, role: foundUser.role,},
             ...token
         };
     },
