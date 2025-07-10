@@ -1,4 +1,4 @@
-import jwt from "jsonwebtoken";
+import jwt, { SignOptions } from "jsonwebtoken";
 import { PrismaClient } from "@prisma/client";
 import { JWTPayload } from "../interfaces/authInterface";
 import bcrypt from 'bcryptjs';
@@ -12,20 +12,42 @@ export const authService = {
         const accessTokenId = uuidv4();
         const refreshTokenId = uuidv4();
 
-        const accessToken = jwt.sign(
-            {
-                data: { userId: userId, email: email, role: role, tokenId: accessTokenId, type: 'ACCESS' },
-                exp: Number(process.env.ACCESS_TOKEN_EXPIRATION)
-            },
+        const accessTokenPayload = {
+            userId: userId,
+            email: email,
+            role: role,
+            tokenId: accessTokenId,
+            type: 'ACCESS'
+        };
+
+        const accessSignOptions : SignOptions = {
+                expiresIn: Number(process.env.ACCESS_TOKEN_EXPIRATION) || "1h",
+                algorithm: 'HS256'
+            }
+
+        const refreshTokenPayload = {
+            userId: userId,
+            email: email,
+            role: role,
+            tokenId: refreshTokenId,
+            type: 'REFRESH'
+        };
+
+        const refreshSignOptions : SignOptions = {
+                expiresIn: Number(process.env.REFRESH_TOKEN_EXPIRATION) || '7d',
+                algorithm: 'HS256'
+            }
+
+        const accessToken: string = jwt.sign(
+            accessTokenPayload,
             process.env.ACCESS_TOKEN_SECRET!,
+            accessSignOptions
         );
 
-        const refreshToken = jwt.sign(
-            {
-                data: { userId: userId, email: email, role: role, tokenId: refreshTokenId, type: 'REFRESH' },
-                exp: Number(process.env.REFRESH_TOKEN_EXPIRATION)
-            },
+        const refreshToken: string = jwt.sign(
+            refreshTokenPayload,
             process.env.REFRESH_TOKEN_SECRET!,
+            refreshSignOptions
         );
 
         return {accessToken, refreshToken};
@@ -49,20 +71,42 @@ export const authService = {
         return expiry ? Date.now() / 1000 > expiry : true;
     },
 
-    async verifyToken(token: string, type: "ACCESS" | "REFRESH") {
-        const secret = type === "ACCESS" ? process.env.ACCESS_TOKEN_SECRET! : process.env.REFRESH_TOKEN_SECRET!;
-        const decodedToken = jwt.verify(token, secret) as JWTPayload;
+    async verifyToken(token: string, type: "ACCESS" | "REFRESH"): Promise<JWTPayload> {
+        try {
+            const secret = type === "ACCESS"
+                ? process.env.ACCESS_TOKEN_SECRET!
+                : process.env.REFRESH_TOKEN_SECRET!;
+            
+            const decodedToken = jwt.verify(token, secret) as JWTPayload;
+            
+            // Validate token type
+            if (decodedToken.type !== type) {
+                throw new Error(`Expected ${type} token, got ${decodedToken.type}`);
+            }
 
-        if(await redisService.isTokenBlacklisted(decodedToken.tokenId)){
-            throw new Error("Token has been revoked");
+            // Check if token is blacklisted
+            if (await redisService.isTokenBlacklisted(decodedToken.tokenId)) {
+                throw new Error("Token has been revoked");
+            }
+
+            // Check user-level blacklist
+            const userBlacklistTime = await redisService.getUserBlacklistTime(decodedToken.userId);
+            if (userBlacklistTime && decodedToken.iat && decodedToken.iat * 1000 < userBlacklistTime) {
+                throw new Error("Token has been revoked");
+            }
+
+            return decodedToken;
+        } catch (error: any) {
+            if (error.name === 'JsonWebTokenError') {
+                throw new Error('MALFORMED_TOKEN');
+            } else if (error.name === 'TokenExpiredError') {
+                throw new Error('TOKEN_EXPIRED');
+            } else if (error.message.includes('revoked')) {
+                throw new Error('TOKEN_REVOKED');
+            } else {
+                throw new Error('INVALID_TOKEN');
+            }
         }
-
-        const userBlacklistTime = await redisService.getUserBlacklistTime(decodedToken.userId);
-        if(userBlacklistTime && decodedToken.iat && decodedToken.iat * 1000 < userBlacklistTime){
-            throw new Error("Token has been revoked");
-        }
-
-        return decodedToken;
     },
 
     // Only register USER role, for admin role will be added manually on the DB

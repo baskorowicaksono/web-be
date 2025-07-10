@@ -21,7 +21,7 @@ export const register = async (req: Request, res: Response, next: NextFunction) 
 
         res.status(201).json({
             message: 'User registered successfully',
-            accessToken: result.accessToken,
+            token: result.accessToken,
             user: result.newUser
         });
         } catch (error) {
@@ -49,7 +49,7 @@ export const login = async (req: Request, res: Response, next: NextFunction): Pr
 
         res.json({
             message: 'Login successful',
-            accessToken: result.accessToken,
+            token: result.accessToken,
             user: result.user
         });
     } catch(error) {
@@ -75,7 +75,7 @@ export const refresh = async (req: Request, res: Response, next: NextFunction): 
         })
 
         res.json({
-            accessToken: result.accessToken,
+            token: result.accessToken,
             user: result.user,
         });
     } catch(error){

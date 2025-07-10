@@ -5,7 +5,7 @@ export interface JWTPayload {
     email: string,
     tokenId: string,
     role: 'USER' | 'ADMIN',
-    type: 'ACCESS' | 'TOKEN',
+    type: 'ACCESS' | 'REFRESH',
     iat?: number,
     exp?: number,
 }

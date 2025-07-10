@@ -1,26 +1,46 @@
-// src/middleware/auth.ts
 import { Response, NextFunction } from 'express';
 import { authService } from '../services/authService';
 import { AuthRequest } from '../interfaces/authInterface';
 
-export const authenticateToken = async (
+export const authMiddleware = async (
   req: AuthRequest,
   res: Response,
   next: NextFunction
-): Promise<void> =>  {
+): Promise<void> => {
   try {
+    // Extract token from Authorization header
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-
-    if (!token) {
-      res.status(401).json({ 
-        message: 'Access token required',
-        error: 'MISSING_TOKEN' 
+    
+    if (!authHeader) {
+      res.status(401).json({
+        success: false,
+        message: 'Authorization header required',
+        error: 'MISSING_AUTH_HEADER'
       });
       return;
     }
 
-    // Verify token (includes Redis blacklist check)
+    if (!authHeader.startsWith('Bearer ')) {
+      res.status(401).json({
+        success: false,
+        message: 'Bearer token required',
+        error: 'INVALID_AUTH_FORMAT'
+      });
+      return;
+    }
+
+    const token = authHeader.split(' ')[1];
+    
+    if (!token || token.trim() === '') {
+      res.status(401).json({
+        success: false,
+        message: 'Access token required',
+        error: 'MISSING_TOKEN'
+      });
+      return;
+    }
+
+    // Verify token
     const decoded = await authService.verifyToken(token, 'ACCESS');
     
     // Set user info in request
@@ -33,30 +53,36 @@ export const authenticateToken = async (
 
     next();
   } catch (error: any) {
+    console.error('Auth middleware error:', error);
+    
     // Handle different types of token errors
-    let message = 'Invalid token';
-    let errorCode = 'INVALID_TOKEN';
+    let message = 'Authentication failed';
+    let errorCode = 'AUTH_FAILED';
 
-    if (error.name === 'TokenExpiredError') {
-      message = 'Token expired';
-      errorCode = 'TOKEN_EXPIRED';
-    } else if (error.name === 'JsonWebTokenError') {
+    if (error.message === 'MALFORMED_TOKEN') {
       message = 'Malformed token';
       errorCode = 'MALFORMED_TOKEN';
-    } else if (error.message === 'Token has been revoked') {
+    } else if (error.message === 'TOKEN_EXPIRED') {
+      message = 'Token expired';
+      errorCode = 'TOKEN_EXPIRED';
+    } else if (error.message === 'TOKEN_REVOKED') {
       message = 'Token has been revoked';
       errorCode = 'TOKEN_REVOKED';
+    } else if (error.message === 'INVALID_TOKEN') {
+      message = 'Invalid token';
+      errorCode = 'INVALID_TOKEN';
     }
 
-    res.status(401).json({ 
+    res.status(401).json({
+      success: false,
       message,
-      error: errorCode 
+      error: errorCode
     });
     return;
   }
 };
+export const authenticateToken = authMiddleware;
 
-// Optional: Middleware for routes that work with or without auth
 export const optionalAuth = async (
   req: AuthRequest,
   res: Response,
@@ -64,17 +90,16 @@ export const optionalAuth = async (
 ): Promise<void> => {
   try {
     const authHeader = req.headers.authorization;
-    const token = authHeader && authHeader.split(' ')[1];
+    const token = authHeader?.split(' ')[1];
 
-    if (token) {
-      // Try to verify token, but don't fail if it's invalid
+    if (token && token.trim() !== '') {
       try {
         const decoded = await authService.verifyToken(token, 'ACCESS');
         req.user = {
-            userId: decoded.userId,
-            email: decoded.email,
-            tokenId: decoded.tokenId,
-            role: decoded.role,
+          userId: decoded.userId,
+          email: decoded.email,
+          tokenId: decoded.tokenId,
+          role: decoded.role,
         };
       } catch (error) {
         // Continue without auth if token is invalid
@@ -83,10 +108,12 @@ export const optionalAuth = async (
     }
   } catch (error) {
     // Continue without auth
+    console.warn('Optional auth error:', error);
   }
   
   next();
 };
+
 
 // Middleware to refresh token automatically if it's about to expire
 export const autoRefreshToken = async (
