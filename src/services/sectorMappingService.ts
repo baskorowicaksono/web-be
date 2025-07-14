@@ -420,4 +420,194 @@ export class SectorMappingService {
       upcomingEffective
     }
   }
+
+// Get active mappings for template generation
+  async getActiveMappingsForTemplate() {
+    try {
+      // Get the latest active mapping for each economic sector
+      const mappings = await this.prisma.$queryRaw<Array<{
+        sektorEkonomi: string
+        tipeKelompok: string
+        namaKelompok: string
+        groupId: number
+        tanggalAwal: Date
+        tanggalAkhir: Date | null
+        isActive: boolean
+      }>>`
+        WITH ranked_mappings AS (
+          SELECT 
+            sektor_ekonomi,
+            tipe_kelompok,
+            nama_kelompok,
+            group_id,
+            tanggal_awal,
+            tanggal_akhir,
+            is_active,
+            ROW_NUMBER() OVER (
+              PARTITION BY sektor_ekonomi 
+              ORDER BY tanggal_awal DESC, created_at DESC
+            ) as row_num
+          FROM sector_group_mappings 
+          WHERE is_active = true
+        )
+        SELECT 
+          sektor_ekonomi as "sektorEkonomi",
+          tipe_kelompok as "tipeKelompok", 
+          nama_kelompok as "namaKelompok",
+          group_id as "groupId",
+          tanggal_awal as "tanggalAwal",
+          tanggal_akhir as "tanggalAkhir",
+          is_active as "isActive"
+        FROM ranked_mappings 
+        WHERE row_num = 1
+        ORDER BY sektor_ekonomi ASC
+      `
+
+      return mappings.map(mapping => ({
+        sektorEkonomi: mapping.sektorEkonomi,
+        tipeKelompok: this.mapTipeKelompokToString(mapping.tipeKelompok),
+        namaKelompok: mapping.namaKelompok,
+        groupId: mapping.groupId,
+        tanggalAwal: mapping.tanggalAwal.toISOString(),
+        tanggalAkhir: mapping.tanggalAkhir?.toISOString(),
+        isActive: mapping.isActive
+      }))
+    } catch (error) {
+      throw new Error(`Failed to fetch active mappings for template: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Batch create mappings from Excel upload
+  async batchCreateFromExcel(
+    mappings: Array<{
+      sektorEkonomi: string
+      tipeKelompok: string
+      namaKelompok: string
+      effectiveStartDate: string
+      createdBy: string
+    }>,
+    userId: string
+  ) {
+    try {
+      const createdMappings = []
+
+      // Process each mapping in a transaction
+      await this.prisma.$transaction(async (tx) => {
+        for (const mappingData of mappings) {
+          // Validate that the economic sector exists
+          const economicSector = await tx.economicSector.findUnique({
+            where: { sektorEkonomi: mappingData.sektorEkonomi }
+          })
+
+          if (!economicSector) {
+            throw new Error(`Economic sector ${mappingData.sektorEkonomi} not found`)
+          }
+
+          // Map tipe_kelompok string to enum
+          const tipeKelompokEnum = this.mapStringToTipeKelompok(mappingData.tipeKelompok)
+          if (!tipeKelompokEnum) {
+            throw new Error(`Invalid tipe_kelompok: ${mappingData.tipeKelompok}`)
+          }
+
+          // Validate business rules
+          if (tipeKelompokEnum === 'NON_KLM' && mappingData.namaKelompok !== 'Non KLM') {
+            throw new Error(`For tipe_kelompok "Non KLM", nama_kelompok must be "Non KLM"`)
+          }
+
+          if (tipeKelompokEnum === 'HIJAU' && mappingData.namaKelompok !== 'Hijau') {
+            throw new Error(`For tipe_kelompok "Hijau", nama_kelompok must be "Hijau"`)
+          }
+
+          if (tipeKelompokEnum === 'SEKTOR_TERTENTU' && 
+              (mappingData.namaKelompok === 'Non KLM' || mappingData.namaKelompok === 'Hijau')) {
+            throw new Error(`For tipe_kelompok "Sektor Tertentu", nama_kelompok cannot be "Non KLM" or "Hijau"`)
+          }
+
+          // Find or create sector group
+          let sectorGroup = await tx.sectorGroup.findFirst({
+            where: { namaGrup: mappingData.namaKelompok }
+          })
+
+          if (!sectorGroup) {
+            sectorGroup = await tx.sectorGroup.create({
+              data: {
+                namaGrup: mappingData.namaKelompok,
+                deskripsi: `Auto-created for ${mappingData.tipeKelompok}`,
+                isActive: true,
+                createdBy: userId
+              }
+            })
+          }
+
+          // Deactivate existing active mappings for this sector
+          await tx.sectorGroupMapping.updateMany({
+            where: {
+              sektorEkonomi: mappingData.sektorEkonomi,
+              isActive: true
+            },
+            data: {
+              isActive: false,
+              tanggalAkhir: new Date(mappingData.effectiveStartDate),
+              updatedBy: userId,
+              updatedAt: new Date()
+            }
+          })
+
+          // Create new mapping
+          const newMapping = await tx.sectorGroupMapping.create({
+            data: {
+              groupId: sectorGroup.id,
+              sektorEkonomi: mappingData.sektorEkonomi,
+              tipeKelompok: tipeKelompokEnum,
+              namaKelompok: mappingData.namaKelompok,
+              tanggalAwal: new Date(mappingData.effectiveStartDate),
+              isActive: false, // Start as draft, needs approval
+              createdBy: userId
+            },
+            include: {
+              sectorGroup: true,
+              economicSector: true
+            }
+          })
+
+          createdMappings.push(newMapping)
+        }
+      })
+
+      return {
+        uploadedCount: createdMappings.length,
+        mappings: this.transformToFrontendFormat(createdMappings)
+      }
+    } catch (error) {
+      throw new Error(`Failed to batch create mappings: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Helper method to map string to TipeKelSektor enum
+  private mapStringToTipeKelompok(tipeKelompok: string): 'NON_KLM' | 'SEKTOR_TERTENTU' | 'HIJAU' | null {
+    switch (tipeKelompok) {
+      case 'Non KLM':
+        return 'NON_KLM'
+      case 'Sektor Tertentu':
+        return 'SEKTOR_TERTENTU'
+      case 'Hijau':
+        return 'HIJAU'
+      default:
+        return null
+    }
+  }
+
+  // Helper method to map TipeKelSektor enum to string
+  private mapTipeKelompokToString(tipeKelompok: string): string {
+    switch (tipeKelompok) {
+      case 'NON_KLM':
+        return 'Non KLM'
+      case 'SEKTOR_TERTENTU':
+        return 'Sektor Tertentu'
+      case 'HIJAU':
+        return 'Hijau'
+      default:
+        return tipeKelompok
+    }
+  }
 }

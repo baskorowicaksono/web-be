@@ -226,4 +226,70 @@ export class SectorMappingController {
       })
     }
   }
+
+  // GET /api/sector-mappings/active-mappings
+  // Returns latest active sector group mappings for template generation
+  static async getActiveMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      // Get the latest active mapping for each sector
+      const activeMappings = await sectorMappingService.getActiveMappingsForTemplate()
+      
+      res.json({
+        success: true,
+        data: activeMappings
+      })
+    } catch (error) {
+      console.error('Error fetching active mappings:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch active mappings',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  // POST /api/sector-mappings/batch-upload
+  // Handle Excel file upload and create multiple mappings
+  static async batchUpload(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { mappings } = req.body
+      const userId = req.user?.userId || 'system' // Assuming you have auth middleware
+      
+      if (!mappings || !Array.isArray(mappings)) {
+        res.status(400).json({
+          success: false,
+          message: 'Invalid request body. Expected mappings array.'
+        })
+        return
+      }
+      
+      // Validate each mapping
+      for (const mapping of mappings) {
+        if (!mapping.sektorEkonomi || !mapping.tipeKelompok || !mapping.namaKelompok) {
+          res.status(400).json({
+            success: false,
+            message: 'Each mapping must have sektorEkonomi, tipeKelompok, and namaKelompok'
+          })
+          return
+        }
+      }
+      
+      // Process batch upload
+      const result = await sectorMappingService.batchCreateFromExcel(mappings, userId)
+      
+      res.json({
+        success: true,
+        message: `Successfully processed ${result.uploadedCount} sector mappings`,
+        data: result
+      })
+      
+    } catch (error) {
+      console.error('Error in batch upload:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process batch upload',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
 }
