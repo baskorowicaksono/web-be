@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -14,20 +8,163 @@ datasource db {
 }
 
 model User {
-  id                String    @id @default(uuid())
-  email             String    @unique
-  hashed_password   String
-  name              String
-  role              Role      @default(USER)
-  isActive          Boolean   @default(true)
-  emailVerified     Boolean   @default(false)
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  id              String   @id @default(uuid())
+  email           String   @unique
+  hashed_password String
+  name            String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  emailVerified   Boolean  @default(false)
+  isActive        Boolean  @default(true)
+  role            Role     @default(USER)
 
   @@map("users")
 }
 
+model BankType {
+  id        Int       @id @default(autoincrement())
+  jenisBank String    @unique @map("jenis_bank") @db.VarChar(3)
+  deskripsi String?
+  createdAt DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+
+  @@map("bank_types")
+}
+
+model BankGroup {
+  id           Int       @id @default(autoincrement())
+  kelompokBank String    @unique @map("kelompok_bank") @db.VarChar(15)
+  deskripsi    String?
+  createdAt    DateTime? @default(now()) @map("created_at") @db.Timestamp(6)
+  banks        Bank[]
+
+  @@map("bank_groups")
+}
+
+model EconomicSector {
+  sektorEkonomi       String               @id @map("sektor_ekonomi") @db.VarChar(6)
+  ket10se             String?              @map("ket_10se") @db.VarChar(200)
+  kategoriUtama       String?              @map("kategori_utama") @db.VarChar(2)
+  createdAt           DateTime?            @default(now()) @map("created_at") @db.Timestamp(6)
+  kreditSektoral      KreditSektoral[]
+  sectorGroupMappings SectorGroupMapping[]
+
+  @@map("economic_sectors")
+}
+
+model TimePeriod {
+  periodeData    DateTime         @id @map("periode_data") @db.Date
+  tahun          String           @db.VarChar(4)
+  bulan          String           @db.VarChar(2)
+  quarter        String?          @db.VarChar(2)
+  namaBulan      String?          @map("nama_bulan") @db.VarChar(15)
+  createdAt      DateTime?        @default(now()) @map("created_at") @db.Timestamp(6)
+  kreditGrowth   KreditGrowth[]
+  kreditSektoral KreditSektoral[]
+
+  @@index([tahun, bulan], map: "idx_time_year_month")
+  @@map("time_periods")
+}
+
+model Bank {
+  idBank         String           @map("id_bank") @db.VarChar(3)
+  jenisBank      String           @map("jenis_bank") @db.VarChar(3)
+  kelompokBankId Int?             @map("kelompok_bank_id")
+  createdAt      DateTime?        @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt      DateTime?        @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  bankGroup      BankGroup?       @relation(fields: [kelompokBankId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  kreditGrowth   KreditGrowth[]
+  kreditSektoral KreditSektoral[]
+
+  @@id([idBank, jenisBank])
+  @@index([jenisBank], map: "idx_banks_jenis")
+  @@index([kelompokBankId], map: "idx_banks_kelompok")
+  @@map("banks")
+}
+
+model SectorGroup {
+  id                  Int                  @id @default(autoincrement())
+  namaGrup            String               @unique @map("nama_grup") @db.VarChar(100)
+  deskripsi           String?
+  isActive            Boolean?             @default(true) @map("is_active")
+  createdBy           String?              @map("created_by") @db.VarChar(50)
+  updatedBy           String?              @map("updated_by") @db.VarChar(50)
+  approvedBy          String?              @map("approved_by") @db.VarChar(50)
+  createdAt           DateTime?            @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt           DateTime?            @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  sectorGroupMappings SectorGroupMapping[]
+
+  @@map("sector_groups")
+}
+
+model SectorGroupMapping {
+  id              Int            @id @default(autoincrement())
+  groupId         Int            @map("group_id")
+  sektorEkonomi   String         @map("sektor_ekonomi") @db.VarChar(6)
+  tipeKelompok    TipeKelSektor  @map("tipe_kelompok")
+  namaKelompok    String         @map("nama_kelompok") @db.VarChar(100)
+  prioritasSektor Int?           @default(0) @map("prioritas_sektor")
+  tanggalAwal     DateTime?      @map("tanggal_awal") @db.Date
+  tanggalAkhir    DateTime?      @map("tanggal_akhir") @db.Date
+  isActive        Boolean?       @default(true) @map("is_active")
+  createdBy       String?        @map("created_by") @db.VarChar(50)
+  updatedBy       String?        @map("updated_by") @db.VarChar(50)
+  approvedBy      String?        @map("approved_by") @db.VarChar(50)
+  createdAt       DateTime?      @default(now()) @map("created_at") @db.Timestamp(6)
+  updatedAt       DateTime?      @default(now()) @updatedAt @map("updated_at") @db.Timestamp(6)
+  sectorGroup     SectorGroup    @relation(fields: [groupId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  economicSector  EconomicSector @relation(fields: [sektorEkonomi], references: [sektorEkonomi], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([groupId, sektorEkonomi, tanggalAwal])
+  @@map("sector_group_mappings")
+}
+
+model KreditSektoral {
+  id             BigInt         @id @default(autoincrement())
+  periodeData    DateTime       @map("periode_data") @db.Date
+  idBank         String         @map("id_bank") @db.VarChar(3)
+  jenisBank      String         @map("jenis_bank") @db.VarChar(3)
+  sektorEkonomi  String         @map("sektor_ekonomi") @db.VarChar(6)
+  jumlahKredit   BigInt?        @map("jumlah_kredit")
+  jumlahNpl      BigInt?        @map("jumlah_npl")
+  createdAt      DateTime?      @default(now()) @map("created_at") @db.Timestamp(6)
+  bank           Bank           @relation(fields: [idBank, jenisBank], references: [idBank, jenisBank], onDelete: NoAction, onUpdate: NoAction)
+  timePeriod     TimePeriod     @relation(fields: [periodeData], references: [periodeData], onDelete: NoAction, onUpdate: NoAction)
+  economicSector EconomicSector @relation(fields: [sektorEkonomi], references: [sektorEkonomi], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([periodeData, idBank, jenisBank, sektorEkonomi])
+  @@index([periodeData, idBank, jenisBank, sektorEkonomi], map: "idx_kredit_main")
+  @@map("kredit_sektoral")
+}
+
+model KreditGrowth {
+  id              BigInt     @id @default(autoincrement())
+  periodeData     DateTime   @map("periode_data") @db.Date
+  idBank          String     @map("id_bank") @db.VarChar(3)
+  jenisBank       String     @map("jenis_bank") @db.VarChar(3)
+  namaKelompok    String     @map("nama_kelompok") @db.VarChar(100)
+  yoyGrowthKredit Decimal?   @map("yoy_growth_kredit") @db.Decimal(8, 8)
+  yoyGrowthNpl    Decimal?   @map("yoy_growth_npl") @db.Decimal(8, 8)
+  credit_share    Decimal?   @db.Decimal(8, 8)
+  createdAt       DateTime?  @default(now()) @map("created_at") @db.Timestamp(6)
+  bank            Bank       @relation(fields: [idBank, jenisBank], references: [idBank, jenisBank], onDelete: NoAction, onUpdate: NoAction)
+  timePeriod      TimePeriod @relation(fields: [periodeData], references: [periodeData], onDelete: NoAction, onUpdate: NoAction)
+
+  @@unique([periodeData, idBank, jenisBank, namaKelompok])
+  @@index([periodeData, idBank, jenisBank, namaKelompok], map: "idx_growth_main")
+  @@map("kredit_growth")
+}
+
 enum Role {
-  USER
-  ADMIN
+  USER @map("USER")
+  ADMIN @map("ADMIN")
+
+  @@map("role")
+}
+
+enum TipeKelSektor {
+  NON_KLM         @map("Non KLM")
+  SEKTOR_TERTENTU @map("Sektor Tertentu")
+  HIJAU           @map("Hijau")
+
+  @@map("tipe_kel_sektor")
 }
