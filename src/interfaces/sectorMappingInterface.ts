@@ -40,3 +40,37 @@ export interface SectorMappingFilters {
   page?: number
   limit?: number
 }
+
+export interface CreatedMappings {
+        id: number
+        groupId: number
+        sektorEkonomi: string
+        tipeKelompok: any // This will be the enum type from Prisma
+        namaKelompok: string
+        prioritasSektor: number | null
+        tanggalAwal: Date | null
+        tanggalAkhir: Date | null
+        isActive: boolean | null
+        createdBy: string | null
+        updatedBy: string | null
+        approvedBy: string | null
+        createdAt: Date | null
+        updatedAt: Date | null
+        sectorGroup: {
+          id: number
+          namaGrup: string
+          deskripsi: string | null
+          isActive: boolean | null
+          createdBy: string | null
+          updatedBy: string | null
+          approvedBy: string | null
+          createdAt: Date | null
+          updatedAt: Date | null
+        }
+        economicSector: {
+          sektorEkonomi: string
+          ket10se: string | null
+          kategoriUtama: string | null
+          createdAt: Date | null
+        }
+      }

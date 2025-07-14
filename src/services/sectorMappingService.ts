@@ -3,7 +3,8 @@ import {
   SectorMappingResponse, 
   CreateSectorMappingRequest, 
   SectorMappingFilters,
-  ExcelUploadRequest 
+  ExcelUploadRequest, 
+  CreatedMappings
 } from '../interfaces/sectorMappingInterface'
 import * as XLSX from 'xlsx'
 
@@ -489,7 +490,7 @@ export class SectorMappingService {
     userId: string
   ) {
     try {
-      const createdMappings = []
+      const createdMappings: Array<CreatedMappings> = []
 
       // Process each mapping in a transaction
       await this.prisma.$transaction(async (tx) => {
