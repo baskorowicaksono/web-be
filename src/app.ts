@@ -6,6 +6,7 @@ import { PrismaClient } from '@prisma/client'
 
 // Import routes
 import routes from "./routes"
+import { SectorTransitionJob } from './jobs/sectorTransitionJob'
 
 dotenv.config()
 
@@ -70,6 +71,21 @@ process.on('SIGINT', async () => {
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
+})
+
+// Initialize the transition job
+const transitionJob = new SectorTransitionJob()
+transitionJob.start()
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  transitionJob.stop()
+  process.exit(0)
+})
+
+process.on('SIGINT', () => {
+  transitionJob.stop()
+  process.exit(0)
 })
 
 export default app

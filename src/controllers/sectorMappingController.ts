@@ -208,7 +208,6 @@ export class SectorMappingController {
     }
   }
 
-  // GET /api/sector-mappings/stats
   static async getSectorMappingStats(req: Request, res: Response, next: NextFunction) : Promise<void> {
     try {
       const result = await sectorMappingService.getSectorMappingStats()
@@ -227,13 +226,11 @@ export class SectorMappingController {
     }
   }
 
-  // GET /api/sector-mappings/active-mappings
-  // Returns latest active sector group mappings for template generation
   static async getActiveMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       // Get the latest active mapping for each sector
       const activeMappings = await sectorMappingService.getActiveMappingsForTemplate()
-      
+
       res.json({
         success: true,
         data: activeMappings
@@ -248,12 +245,10 @@ export class SectorMappingController {
     }
   }
 
-  // POST /api/sector-mappings/batch-upload
-  // Handle Excel file upload and create multiple mappings
   static async batchUpload(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
     try {
       const { mappings } = req.body
-      const userId = req.user?.userId || 'system' // Assuming you have auth middleware
+      const userId = req.user?.email || 'system' // Assuming you have auth middleware
       
       if (!mappings || !Array.isArray(mappings)) {
         res.status(400).json({
@@ -288,6 +283,79 @@ export class SectorMappingController {
       res.status(500).json({
         success: false,
         message: 'Failed to process batch upload',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  static async getUpcomingTransitions(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const days = parseInt(req.query.days as string) || 7
+      const result = await sectorMappingService.getUpcomingTransitions(days)
+
+      res.json({
+        success: true,
+        data: result
+      })
+    } catch (error) {
+      console.error('Error fetching upcoming transitions:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Failed to fetch upcoming transitions',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  static async triggerTransition(req: AuthRequest, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { sektorEkonomi, effectiveDate } = req.body
+      const userId = req.user?.email || 'system'
+
+      if (!sektorEkonomi || !effectiveDate) {
+        res.status(400).json({
+          success: false,
+          message: 'sektorEkonomi and effectiveDate are required'
+        })
+        return
+      }
+
+      await sectorMappingService.manualTriggerSectorTransition(
+        sektorEkonomi,
+        new Date(effectiveDate),
+        userId
+      )
+
+      res.json({
+        success: true,
+        message: `Sector transition triggered for ${sektorEkonomi}`
+      })
+
+    } catch (error) {
+      console.error('Error triggering transition:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Failed to trigger transition',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    }
+  }
+
+  static async runDailyTransitions(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await sectorMappingService.processDailyTransitions()
+
+      res.json({
+        success: true,
+        message: 'Daily transitions completed',
+        data: result
+      })
+
+    } catch (error) {
+      console.error('Error running daily transitions:', error)
+      res.status(500).json({
+        success: false,
+        message: 'Failed to run daily transitions',
         error: error instanceof Error ? error.message : 'Unknown error'
       })
     }

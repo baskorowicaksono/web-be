@@ -16,6 +16,9 @@ router.post('/approve', SectorMappingController.approveSectorMappings)
 router.delete('/', SectorMappingController.deleteSectorMappings)
 router.get("/active-mappings", SectorMappingController.getActiveMappings)
 router.post("/batch-upload", SectorMappingController.batchUpload)
+router.get('/upcoming-transitions', SectorMappingController.getUpcomingTransitions)
+router.post('/trigger-transition', SectorMappingController.triggerTransition)
+router.post('/run-daily-transitions', SectorMappingController.runDailyTransitions)
 
 // File upload route
 router.post('/upload',

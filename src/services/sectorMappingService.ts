@@ -539,19 +539,37 @@ export class SectorMappingService {
             })
           }
 
-          // Deactivate existing active mappings for this sector
-          await tx.sectorGroupMapping.updateMany({
+          // Handle temporal transition for existing active mappings
+          const effectiveStartDate = new Date(mappingData.effectiveStartDate)
+          
+          // Calculate T-1 day (day before effective start date)
+          const endDateForCurrent = new Date(effectiveStartDate)
+          endDateForCurrent.setDate(endDateForCurrent.getDate() - 1)
+          
+          // Find existing active mappings for this sector
+          const existingActiveMappings = await tx.sectorGroupMapping.findMany({
             where: {
               sektorEkonomi: mappingData.sektorEkonomi,
               isActive: true
-            },
-            data: {
-              isActive: false,
-              tanggalAkhir: new Date(mappingData.effectiveStartDate),
-              updatedBy: userId,
-              updatedAt: new Date()
             }
           })
+
+          // Update existing active mappings with proper end dates
+          if (existingActiveMappings.length > 0) {
+            await tx.sectorGroupMapping.updateMany({
+              where: {
+                sektorEkonomi: mappingData.sektorEkonomi,
+                isActive: true
+              },
+              data: {
+                // Rule 1: Current active sector will be active until T-1 day
+                tanggalAkhir: endDateForCurrent, // They remain active until day before new effective date
+                updatedBy: userId,
+                updatedAt: new Date()
+                // Note: isActive remains true until the effective start date
+              }
+            })
+          }
 
           // Create new mapping
           const newMapping = await tx.sectorGroupMapping.create({
@@ -560,8 +578,8 @@ export class SectorMappingService {
               sektorEkonomi: mappingData.sektorEkonomi,
               tipeKelompok: tipeKelompokEnum,
               namaKelompok: mappingData.namaKelompok,
-              tanggalAwal: new Date(mappingData.effectiveStartDate),
-              isActive: false, // Start as draft, needs approval
+              tanggalAwal: effectiveStartDate,
+              isActive: false, // Start as draft, will be activated on effective date
               createdBy: userId
             },
             include: {
@@ -580,6 +598,260 @@ export class SectorMappingService {
       }
     } catch (error) {
       throw new Error(`Failed to batch create mappings: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+   async getUpcomingTransitions(days: number = 7) {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    const futureDate = new Date(today)
+    futureDate.setDate(futureDate.getDate() + days)
+
+    try {
+      // Mappings that will be deactivated in the next X days
+      const upcomingDeactivations = await this.prisma.sectorGroupMapping.findMany({
+        where: {
+          isActive: true,
+          tanggalAkhir: {
+            gte: today,
+            lte: futureDate
+          }
+        },
+        include: {
+          economicSector: true,
+          sectorGroup: true
+        },
+        orderBy: {
+          tanggalAkhir: 'asc'
+        }
+      })
+
+      // Mappings that will be activated in the next X days
+      const upcomingActivations = await this.prisma.sectorGroupMapping.findMany({
+        where: {
+          isActive: false,
+          tanggalAwal: {
+            gte: today,
+            lte: futureDate
+          }
+        },
+        include: {
+          economicSector: true,
+          sectorGroup: true
+        },
+        orderBy: {
+          tanggalAwal: 'asc'
+        }
+      })
+
+      return {
+        upcomingDeactivations: this.transformToFrontendFormat(upcomingDeactivations),
+        upcomingActivations: this.transformToFrontendFormat(upcomingActivations)
+      }
+    } catch (error) {
+      throw new Error(`Failed to get upcoming transitions: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // 2. TRIGGER SECTOR TRANSITION - Manual trigger for specific sector
+  async triggerSectorTransition(sektorEkonomi: string, effectiveDate: Date, userId: string) {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Calculate T-1 day
+        const endDateForCurrent = new Date(effectiveDate)
+        endDateForCurrent.setDate(endDateForCurrent.getDate() - 1)
+
+        // Deactivate current active mappings and set their end date to T-1
+        await tx.sectorGroupMapping.updateMany({
+          where: {
+            sektorEkonomi,
+            isActive: true
+          },
+          data: {
+            isActive: false,
+            tanggalAkhir: endDateForCurrent,
+            updatedAt: new Date(),
+            updatedBy: userId
+          }
+        })
+
+        // Activate new mapping for this date
+        await tx.sectorGroupMapping.updateMany({
+          where: {
+            sektorEkonomi,
+            tanggalAwal: effectiveDate,
+            isActive: false
+          },
+          data: {
+            isActive: true,
+            updatedAt: new Date(),
+            updatedBy: userId
+          }
+        })
+      })
+
+      console.log(`Manual transition completed for sector ${sektorEkonomi} on ${effectiveDate}`)
+    } catch (error) {
+      throw new Error(`Failed to trigger manual transition: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+// Process daily sector group transitions
+  async processDailyTransitions() {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0) // Start of day
+    
+    const transitions: Array<{
+      sektorEkonomi: string
+      action: 'deactivated' | 'activated'
+      mapping: any
+    }> = []
+
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        
+        // Rule 2: Deactivate current sector groups on D-Day of new effective start date
+        // Find mappings that should be deactivated today (tanggal_akhir = today)
+        const mappingsToDeactivate = await tx.sectorGroupMapping.findMany({
+          where: {
+            isActive: true,
+            tanggalAkhir: {
+              gte: today,
+              lt: new Date(today.getTime() + 24 * 60 * 60 * 1000) // Less than tomorrow
+            }
+          },
+          include: {
+            economicSector: true,
+            sectorGroup: true
+          }
+        })
+
+        // Deactivate them
+        if (mappingsToDeactivate.length > 0) {
+          await tx.sectorGroupMapping.updateMany({
+            where: {
+              id: {
+                in: mappingsToDeactivate.map(m => m.id)
+              }
+            },
+            data: {
+              isActive: false,
+              updatedAt: new Date(),
+              updatedBy: 'system_transition'
+            }
+          })
+
+          // Add to transitions log
+          mappingsToDeactivate.forEach(mapping => {
+            transitions.push({
+              sektorEkonomi: mapping.sektorEkonomi,
+              action: 'deactivated',
+              mapping: this.transformToFrontendFormat([mapping])[0]
+            })
+          })
+        }
+
+        // Rule 2: Activate new sector groups on D-Day of their effective start date
+        // Find mappings that should be activated today (tanggal_awal = today and not yet active)
+        const mappingsToActivate = await tx.sectorGroupMapping.findMany({
+          where: {
+            isActive: false,
+            tanggalAwal: {
+              gte: today,
+              lt: new Date(today.getTime() + 24 * 60 * 60 * 1000) // Less than tomorrow
+            },
+            // Only activate approved mappings (optional - adjust based on your approval workflow)
+            approvedBy: {
+              not: null
+            }
+          },
+          include: {
+            economicSector: true,
+            sectorGroup: true
+          }
+        })
+
+        // Activate them
+        if (mappingsToActivate.length > 0) {
+          await tx.sectorGroupMapping.updateMany({
+            where: {
+              id: {
+                in: mappingsToActivate.map(m => m.id)
+              }
+            },
+            data: {
+              isActive: true,
+              updatedAt: new Date(),
+              updatedBy: 'system_transition'
+            }
+          })
+
+          // Add to transitions log
+          mappingsToActivate.forEach(mapping => {
+            transitions.push({
+              sektorEkonomi: mapping.sektorEkonomi,
+              action: 'activated',
+              mapping: this.transformToFrontendFormat([mapping])[0]
+            })
+          })
+        }
+
+        console.log(`Daily transition completed: ${mappingsToDeactivate.length} deactivated, ${mappingsToActivate.length} activated`)
+      })
+
+      return {
+        deactivatedCount: transitions.filter(t => t.action === 'deactivated').length,
+        activatedCount: transitions.filter(t => t.action === 'activated').length,
+        transitions
+      }
+
+    } catch (error) {
+      console.error('Error processing daily transitions:', error)
+      throw new Error(`Failed to process daily transitions: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }
+
+  // Manual trigger for specific sector transition
+  async manualTriggerSectorTransition(sektorEkonomi: string, effectiveDate: Date, userId: string) {
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Calculate T-1 day
+        const endDateForCurrent = new Date(effectiveDate)
+        endDateForCurrent.setDate(endDateForCurrent.getDate() - 1)
+
+        // Deactivate current active mappings and set their end date to T-1
+        await tx.sectorGroupMapping.updateMany({
+          where: {
+            sektorEkonomi,
+            isActive: true
+          },
+          data: {
+            isActive: false,
+            tanggalAkhir: endDateForCurrent,
+            updatedAt: new Date(),
+            updatedBy: userId
+          }
+        })
+
+        // Activate new mapping for this date
+        await tx.sectorGroupMapping.updateMany({
+          where: {
+            sektorEkonomi,
+            tanggalAwal: effectiveDate,
+            isActive: false
+          },
+          data: {
+            isActive: true,
+            updatedAt: new Date(),
+            updatedBy: userId
+          }
+        })
+      })
+
+      console.log(`Manual transition completed for sector ${sektorEkonomi} on ${effectiveDate}`)
+    } catch (error) {
+      throw new Error(`Failed to trigger manual transition: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
